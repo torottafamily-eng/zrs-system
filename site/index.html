@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>業界ニュース一覧</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  h1 { font-size: 1.4rem; }
+  ul { list-style: none; padding: 0; }
+  li { padding: 0.75rem 0; border-bottom: 1px solid #eee; }
+  a { color: #0b5fff; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .date { color: #888; font-size: 0.85rem; display: block; margin-top: 0.2rem; }
+  .empty { color: #888; }
+</style>
+</head>
+<body>
+  <h1>業界ニュース一覧</h1>
+  <ul id="list"><li class="empty">読み込み中...</li></ul>
+  <script>
+    fetch("data/articles.json")
+      .then((res) => res.json())
+      .then((articles) => {
+        const list = document.getElementById("list");
+        list.innerHTML = "";
+        if (!articles.length) {
+          list.innerHTML = '<li class="empty">まだ記事がありません。</li>';
+          return;
+        }
+        for (const article of articles) {
+          const li = document.createElement("li");
+          const a = document.createElement("a");
+          a.href = article.url;
+          a.textContent = article.title;
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+          const date = document.createElement("span");
+          date.className = "date";
+          date.textContent = article.published_at || article.posted_at || "";
+          li.appendChild(a);
+          li.appendChild(date);
+          list.appendChild(li);
+        }
+      })
+      .catch(() => {
+        document.getElementById("list").innerHTML =
+          '<li class="empty">記事一覧の読み込みに失敗しました。</li>';
+      });
+  </script>
+</body>
+</html>

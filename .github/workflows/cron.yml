@@ -1,0 +1,43 @@
+name: Industry News Bot
+
+on:
+  schedule:
+    # 毎日 23:00 UTC (= JST 8:00) に起動。
+    # 「2日に1回」の間隔はスクリプト内(run_state.last_run_at)で制御するため、
+    # cron自体は毎日実行でよい(月末月初をまたぐ間隔ズレを避けるため)。
+    - cron: "0 23 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: industry-news-bot
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run news bot
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_ERROR_WEBHOOK_URL: ${{ secrets.SLACK_ERROR_WEBHOOK_URL }}
+          RSS_URL: ${{ secrets.RSS_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          ENABLE_WEBSITE_PUBLISH: ${{ secrets.ENABLE_WEBSITE_PUBLISH }}
+        run: python main.py
