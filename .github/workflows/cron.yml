@@ -8,9 +8,6 @@ on:
     - cron: "0 23 * * *"
   workflow_dispatch: {}
 
-permissions:
-  contents: write
-
 concurrency:
   group: industry-news-bot
   cancel-in-progress: false
@@ -34,10 +31,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SLACK_ERROR_WEBHOOK_URL: ${{ secrets.SLACK_ERROR_WEBHOOK_URL }}
           RSS_URL: ${{ secrets.RSS_URL }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          ENABLE_WEBSITE_PUBLISH: ${{ secrets.ENABLE_WEBSITE_PUBLISH }}
         run: python main.py

@@ -19,12 +19,25 @@
   <h1>業界ニュース一覧</h1>
   <ul id="list"><li class="empty">読み込み中...</li></ul>
   <script>
-    fetch("data/articles.json")
+    // このプロジェクト用のSupabase Project URLとanon(publishable)キー。
+    // anonキーはRLS(Row Level Security)で読み取り専用に制限されているため、
+    // クライアント側のコードに埋め込んで公開する設計で問題ない。
+    const SUPABASE_URL = "https://osmvsriosaojgcmgwvhk.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9zbXZzcmlvc2FvamdjbWd3dmhrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU5MDgzNTYsImV4cCI6MjEwMTQ4NDM1Nn0.hQvs3jYdq0YNmwROJM3p5ijmY7jwGBmwcg5jMPVgXv0";
+
+    const endpoint = `${SUPABASE_URL}/rest/v1/articles?select=title,url,published_at,created_at&order=created_at.desc`;
+
+    fetch(endpoint, {
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+    })
       .then((res) => res.json())
       .then((articles) => {
         const list = document.getElementById("list");
         list.innerHTML = "";
-        if (!articles.length) {
+        if (!Array.isArray(articles) || !articles.length) {
           list.innerHTML = '<li class="empty">まだ記事がありません。</li>';
           return;
         }
@@ -37,7 +50,7 @@
           a.rel = "noopener noreferrer";
           const date = document.createElement("span");
           date.className = "date";
-          date.textContent = article.published_at || article.posted_at || "";
+          date.textContent = article.published_at || article.created_at || "";
           li.appendChild(a);
           li.appendChild(date);
           list.appendChild(li);

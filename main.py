@@ -3,32 +3,31 @@
 処理フロー:
   Step 0: 前回実行から指定時間(既定48時間)経っていなければスキップ
   Step 1: RSSから記事取得
-  Step 2: 未処理(posted_articles未登録)の記事のみ抽出
+  Step 2: 未判定(judgement_logs未登録)の記事のみ抽出
   Step 3: Geminiで「業界全体ニュース」かどうかを構造化出力で判定し、全件ログ保存
-  Step 4: OK判定の記事のみSlack投稿(有効時はWebサイトへも反映)
-  Step 5: 各外部呼び出しはリトライし、最終失敗時はSlackへエラー通知
+  Step 4: OK判定の記事のみ articles テーブルに保存(Webサイトはこのテーブルを直接参照する)
+
+エラー発生時はSlack通知等は行わず、例外を上位に伝播させてスクリプトを異常終了させる。
+GitHub Actions側でジョブが失敗として記録され、リポジトリの通知設定に従って
+オーナーに失敗通知が届く(README参照)。
 
 設計メモ:
-  - posted_articles は「投稿済み」だけでなく「判定処理済み」の記事も登録する。
-    NG記事を登録しないと、RSSに残り続ける限り毎回Geminiに再判定させることになり、
-    無料枠のレート制限を無駄に消費するため。
-  - Slackのテキストはmrkdwn形式(<url|text>)でリンク化する。HTMLの<a>タグは
-    Slackでは文字列としてそのまま表示されクリックできないため、Webサイト用の
-    HTMLリンクとは別に生成する。
+  - 重複防止は judgement_logs.url を「一度判定した記事」の記録として利用する。
+    NG記事もここに記録されるため、RSSに残り続ける記事を毎回Geminiに
+    再判定させることがない。
+  - articles テーブルは重複防止のキーではなく、Webサイトが直接読み込む
+    公開データそのもの(OK判定の記事のみ)。RLSで読み取り専用に公開している。
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import feedparser
-import requests
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -43,8 +42,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("news-bot")
 
-SITE_DATA_PATH = os.path.join("site", "data", "articles.json")
-
 
 class ConfigError(RuntimeError):
     pass
@@ -54,16 +51,9 @@ class Config:
     def __init__(self) -> None:
         self.gemini_api_key = self._require("GEMINI_API_KEY")
         self.gemini_model = self._require("GEMINI_MODEL")
-        self.slack_webhook_url = self._require("SLACK_WEBHOOK_URL")
-        self.slack_error_webhook_url = (
-            os.environ.get("SLACK_ERROR_WEBHOOK_URL") or self.slack_webhook_url
-        )
         self.rss_url = self._require("RSS_URL")
         self.supabase_url = self._require("SUPABASE_URL")
         self.supabase_key = self._require("SUPABASE_KEY")
-        self.enable_website_publish = (
-            os.environ.get("ENABLE_WEBSITE_PUBLISH", "false").strip().lower() == "true"
-        )
         self.run_interval_hours = float(os.environ.get("RUN_INTERVAL_HOURS", "48"))
 
     @staticmethod
@@ -121,12 +111,10 @@ def fetch_rss_articles(rss_url: str) -> list[dict[str, Any]]:
         title = entry.get("title")
         if not url or not title:
             continue
-        guid = entry.get("id") or entry.get("guid") or url
         summary = entry.get("summary", "") or ""
         published_at = entry.get("published") or entry.get("updated") or ""
         articles.append(
             {
-                "guid": guid,
                 "url": url,
                 "title": title,
                 "summary": summary,
@@ -151,25 +139,9 @@ def update_last_run_at(supabase: Client) -> None:
     ).eq("id", 1).execute()
 
 
-def get_processed_keys(supabase: Client) -> set[str]:
-    res = supabase.table("posted_articles").select("url,guid").execute()
-    keys: set[str] = set()
-    for row in res.data or []:
-        if row.get("guid"):
-            keys.add(row["guid"])
-        if row.get("url"):
-            keys.add(row["url"])
-    return keys
-
-
-def mark_processed(supabase: Client, article: dict[str, Any]) -> None:
-    supabase.table("posted_articles").insert(
-        {
-            "url": article["url"],
-            "guid": article.get("guid"),
-            "title": article["title"],
-        }
-    ).execute()
+def get_judged_urls(supabase: Client) -> set[str]:
+    res = supabase.table("judgement_logs").select("url").execute()
+    return {row["url"] for row in (res.data or []) if row.get("url")}
 
 
 def save_judgement_log(supabase: Client, article: dict[str, Any], result: JudgementResult) -> None:
@@ -179,6 +151,16 @@ def save_judgement_log(supabase: Client, article: dict[str, Any], result: Judgem
             "title": article["title"],
             "is_industry_news": result.is_industry_news,
             "reason": result.reason,
+        }
+    ).execute()
+
+
+def save_article(supabase: Client, article: dict[str, Any]) -> None:
+    supabase.table("articles").insert(
+        {
+            "url": article["url"],
+            "title": article["title"],
+            "published_at": article.get("published_at") or None,
         }
     ).execute()
 
@@ -198,96 +180,12 @@ def judge_industry_news(client: genai.Client, model: str, article: dict[str, Any
     return JudgementResult.model_validate_json(response.text)
 
 
-def format_slack_message(article: dict[str, Any]) -> str:
-    # Slackのmrkdwn形式。HTMLの<a>タグはSlackでは文字列のまま表示されクリックできない。
-    return f"<{article['url']}|{article['title']}>"
-
-
-def format_html_link(article: dict[str, Any]) -> str:
-    return f'<a href="{article["url"]}">{article["title"]}</a>'
-
-
-def post_to_slack(webhook_url: str, text: str) -> None:
-    resp = requests.post(webhook_url, json={"text": text}, timeout=15)
-    resp.raise_for_status()
-
-
-def publish_to_website(article: dict[str, Any]) -> None:
-    os.makedirs(os.path.dirname(SITE_DATA_PATH), exist_ok=True)
-    if os.path.exists(SITE_DATA_PATH):
-        with open(SITE_DATA_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    else:
-        data = []
-
-    data.insert(
-        0,
-        {
-            "title": article["title"],
-            "url": article["url"],
-            "title_html": format_html_link(article),
-            "published_at": article.get("published_at"),
-            "posted_at": datetime.now(timezone.utc).isoformat(),
-        },
-    )
-
-    with open(SITE_DATA_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.write("\n")
-
-    _git_commit_and_push(SITE_DATA_PATH, f"chore: add article - {article['title']}")
-
-
-def _git_commit_and_push(path: str, message: str) -> None:
-    subprocess.run(["git", "config", "user.name", "news-bot"], check=True)
-    subprocess.run(
-        ["git", "config", "user.email", "news-bot@users.noreply.github.com"], check=True
-    )
-    subprocess.run(["git", "add", path], check=True)
-
-    diff = subprocess.run(["git", "diff", "--cached", "--quiet"])
-    if diff.returncode == 0:
-        logger.info("git差分なし。コミットをスキップします。")
-        return
-
-    subprocess.run(["git", "commit", "-m", message], check=True)
-    subprocess.run(["git", "push"], check=True)
-
-
-def notify_error(config: Config, stage: str, exc: Exception) -> None:
-    logger.error("%s でエラーが発生しました: %s", stage, exc)
-    try:
-        post_to_slack(
-            config.slack_error_webhook_url,
-            f":rotating_light: [業界ニュースBot] {stage} でエラーが発生しました: {exc}",
-        )
-    except Exception as notify_exc:  # noqa: BLE001
-        logger.error("エラー通知の送信にも失敗しました: %s", notify_exc)
-
-
-def safe_update_last_run(config: Config, supabase: Client) -> None:
-    try:
-        update_last_run_at(supabase)
-    except Exception as exc:  # noqa: BLE001
-        notify_error(config, "実行日時の更新", exc)
-
-
 def main() -> None:
-    try:
-        config = Config()
-    except ConfigError as exc:
-        logger.error("設定エラー: %s", exc)
-        raise SystemExit(1) from exc
-
+    config = Config()
     supabase = create_client(config.supabase_url, config.supabase_key)
 
     # Step 0: 前回実行からの経過時間チェック
-    try:
-        last_run_at = get_last_run_at(supabase)
-    except Exception as exc:  # noqa: BLE001
-        notify_error(config, "実行状態の取得", exc)
-        return
-
+    last_run_at = get_last_run_at(supabase)
     if last_run_at is not None:
         elapsed = datetime.now(timezone.utc) - last_run_at
         threshold = timedelta(hours=config.run_interval_hours)
@@ -299,82 +197,37 @@ def main() -> None:
             )
             return
 
-    # Step 1: RSS取得(失敗したら中断)
-    try:
-        articles = with_retry(fetch_rss_articles, config.rss_url)
-    except Exception as exc:  # noqa: BLE001
-        notify_error(config, "RSS取得", exc)
-        return
+    # Step 1: RSS取得
+    articles = with_retry(fetch_rss_articles, config.rss_url)
 
-    # Step 2: 重複(処理済み)チェック
-    try:
-        processed_keys = get_processed_keys(supabase)
-    except Exception as exc:  # noqa: BLE001
-        notify_error(config, "投稿済み記事一覧の取得", exc)
-        return
-
-    new_articles = [
-        a for a in articles if a["guid"] not in processed_keys and a["url"] not in processed_keys
-    ]
+    # Step 2: 未判定の記事のみ抽出
+    judged_urls = get_judged_urls(supabase)
+    new_articles = [a for a in articles if a["url"] not in judged_urls]
     logger.info("新規記事: %d件(取得%d件中)", len(new_articles), len(articles))
 
     if not new_articles:
-        safe_update_last_run(config, supabase)
+        update_last_run_at(supabase)
         return
 
-    # Step 3: AI判定
+    # Step 3 & 4: AI判定 -> ログ保存 -> OK記事のみarticlesに保存
     genai_client = genai.Client(api_key=config.gemini_api_key)
-    ok_articles = []
-    judged_articles = []
+    saved_count = 0
 
     for article in new_articles:
         try:
             result = with_retry(judge_industry_news, genai_client, config.gemini_model, article)
         except Exception as exc:  # noqa: BLE001
             logger.error("AI判定に失敗したためこの記事は今回スキップします: %s / %s", article["title"], exc)
-            continue
+            continue  # judgement_logsに残らないため次回また判定対象になる
 
-        judged_articles.append(article)
-
-        try:
-            save_judgement_log(supabase, article, result)
-        except Exception as exc:  # noqa: BLE001
-            logger.error("判定ログの保存に失敗しました: %s", exc)
+        save_judgement_log(supabase, article, result)
 
         if result.is_industry_news:
-            ok_articles.append(article)
+            save_article(supabase, article)
+            saved_count += 1
 
-    # Step 4: 配信(OK記事のみ)。判定済み(NG含む)は処理済みとして登録し、次回以降の再判定を防ぐ。
-    for article in ok_articles:
-        message = format_slack_message(article)
-        try:
-            with_retry(post_to_slack, config.slack_webhook_url, message)
-        except Exception as exc:  # noqa: BLE001
-            notify_error(config, f"Slack投稿({article['title']})", exc)
-            continue  # 投稿できなかった記事はposted登録せず次回リトライ対象にする
-
-        if config.enable_website_publish:
-            try:
-                with_retry(publish_to_website, article)
-            except Exception as exc:  # noqa: BLE001
-                notify_error(config, f"Webサイト反映({article['title']})", exc)
-                continue
-
-        try:
-            mark_processed(supabase, article)
-        except Exception as exc:  # noqa: BLE001
-            logger.error("処理済み登録に失敗しました: %s / %s", article["title"], exc)
-
-    ok_urls = {a["url"] for a in ok_articles}
-    for article in judged_articles:
-        if article["url"] in ok_urls:
-            continue
-        try:
-            mark_processed(supabase, article)
-        except Exception as exc:  # noqa: BLE001
-            logger.error("処理済み登録(NG記事)に失敗しました: %s / %s", article["title"], exc)
-
-    safe_update_last_run(config, supabase)
+    logger.info("業界ニュースとして掲載した記事: %d件", saved_count)
+    update_last_run_at(supabase)
 
 
 if __name__ == "__main__":
