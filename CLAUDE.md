@@ -2,7 +2,7 @@
 
 ## プロジェクト概要
 
-業界ニュース自動選別・リンク掲載システム。許諾済みメディアのRSSから記事を取得し、Groq APIで「業界全体のニュース」のみを自動選別した上でSupabaseに保存し、Webサイト（`site/index.html`）がSupabaseから直接読み込んで表示する。Slack等の通知は使わないシンプル構成（ユーザー指示により当初のSlack段階公開案を廃止）。運用コストは完全0円（GitHub Actions + Groq Free Tier + Supabase Free Tier）。
+業界ニュース自動選別・リンク掲載システム。許諾済みメディアのRSSから記事を取得し、Groq APIで「業界全体のニュース」のみを自動選別した上でSupabaseに保存し、Webサイト（`docs/index.html`）がSupabaseから直接読み込んで表示する。Slack等の通知は使わないシンプル構成（ユーザー指示により当初のSlack段階公開案を廃止）。運用コストは完全0円（GitHub Actions + Groq Free Tier + Supabase Free Tier）。
 
 発注元はパチンコ業界の組合（詳細は[[project_purpose]]メモリ参照）。中立性が求められるため、個別企業寄りの掲載は避けること。
 
@@ -11,7 +11,7 @@
 - 定期実行: GitHub Actions（毎日実行、48時間未満ならスクリプト内でスキップ）
 - AI判定: Groq API（`groq`公式SDK、`response_format`の`json_schema`によるネイティブ構造化出力。モデル名は`GROQ_MODEL`環境変数で指定し固定コーディングしない。2026年3月のGemini課金体系変更により、カード登録不要の無料枠が使えるGroqに変更した経緯あり）
 - 永続化: Supabase（Free Tier）。`articles`（公開データ、RLSで読み取り公開）/ `judgement_logs`（全判定ログ、重複防止キーも兼ねる）/ `run_state`（前回実行日時）の3テーブル
-- 出力先: `site/index.html`が`anon`キーでSupabase REST APIを直接叩く静的ページ（ビルド・git commit不要、GitHub Pages等でそのまま公開）
+- 出力先: `docs/index.html`が`anon`キーでSupabase REST APIを直接叩く静的ページ（ビルド不要、GitHub Pages(公開元: `/docs`)でそのまま公開。リポジトリはPagesの無料利用条件を満たすためPublicにしてある）
 - 失敗通知: Slackは使わず、例外を伝播させGitHub Actionsのジョブを失敗させることで、GitHubのデフォルト通知に任せる
 
 ### 運用上の注意点

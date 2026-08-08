@@ -1,7 +1,7 @@
 # 業界ニュース自動選別・リンク掲載システム
 
 許諾済みメディアのRSSから記事を取得し、Groq API(Llama系モデル)で「業界全体のニュース」のみを自動選別した上で、
-Supabaseに保存し、Webサイト(`site/index.html`)がそのデータを直接読み込んで一覧表示する、
+Supabaseに保存し、Webサイト(`docs/index.html`)がそのデータを直接読み込んで一覧表示する、
 運用コスト0円のシステムです。
 
 ## 全体構成
@@ -12,7 +12,7 @@ Supabaseに保存し、Webサイト(`site/index.html`)がそのデータを直�
   - `articles`: 業界ニュースと判定された記事(Webサイトが直接読み込む公開テーブル)
   - `judgement_logs`: 全記事の判定ログ(OK/NG問わず。重複判定防止のキーも兼ねる)
   - `run_state`: 前回実行日時(1行のみ)
-- **Web公開**: `site/index.html`が、ブラウザから直接Supabaseの`articles`テーブルをREST API経由で取得して表示する(サーバー処理・ビルド不要)
+- **Web公開**: `docs/index.html`が、ブラウザから直接Supabaseの`articles`テーブルをREST API経由で取得して表示する(サーバー処理・ビルド不要。GitHub Pagesは無料プランだとPublicリポジトリでのみ使えるため、このリポジトリはPublicにしてある)
 
 Slackなどの通知は使用していません。実行が失敗した場合はGitHub Actionsのジョブが失敗として記録され、
 リポジトリの通知設定に従ってオーナーにメール等で通知されます(詳しくは後述)。
@@ -26,7 +26,7 @@ Slackなどの通知は使用していません。実行が失敗した場合は
    - `articles`(公開記事)、`judgement_logs`(AI判定ログ)、`run_state`(実行状態、1行のみ)の3テーブルが作成されます。
    - `articles`のみRow Level Securityで「読み取り専用の公開ポリシー」を付与しています。他2テーブルはservice_roleキーのみアクセス可能です。
 3. 「Project Settings」→「API Keys」→「Legacy anon, service_role API keys」から、後述の`SUPABASE_URL`(Project URL)と`SUPABASE_KEY`(service_role key)を控える。
-   - 同じ画面の`anon`キーは`site/index.html`内に埋め込み済みです(公開して問題ない設計です。詳しくは後述)。
+   - 同じ画面の`anon`キーは`docs/index.html`内に埋め込み済みです(公開して問題ない設計です。詳しくは後述)。
 
 ### 2. Groq APIキーの取得
 
@@ -46,11 +46,12 @@ Slackなどの通知は使用していません。実行が失敗した場合は
 
 ### 4. GitHub Pagesの有効化
 
-`Settings > Pages` で、公開元を`site/`ディレクトリ(または任意のブランチ)に設定する。`site/index.html`はビルド不要の静的ファイルなので、そのまま公開できる。
+GitHub Pages(無料プラン)はPublicリポジトリでのみ利用できるため、リポジトリをPublicにしておく必要がある(`.env`はコミット対象外のため、秘密情報が公開される心配はない)。
+`Settings > Pages` で、公開元のブランチを`master`、フォルダを`/docs`に設定する(GitHub Pagesはブランチ配下のフォルダとして`/`か`/docs`のみ選べるため、サイトは`docs/index.html`に置いている)。ビルド不要の静的ファイルなので、そのまま公開できる。
 
 ## なぜanonキーをHTMLに直書きしているか
 
-`site/index.html`には`SUPABASE_URL`と`anon`キーを直接埋め込んでいます。`anon`キーは「公開して問題ない」設計のキーで、
+`docs/index.html`には`SUPABASE_URL`と`anon`キーを直接埋め込んでいます。`anon`キーは「公開して問題ない」設計のキーで、
 実際のアクセス制御は`articles`テーブルに設定したRow Level Security(RLS)ポリシー(読み取りのみ許可)で行っています。
 `judgement_logs`や`run_state`にはRLSポリシーを一切付与していないため、このanonキーではアクセスできません。
 
@@ -100,5 +101,5 @@ requirements.txt              # 依存ライブラリ
 .env.example                  # 環境変数テンプレート
 supabase/schema.sql           # Supabaseテーブル定義(DDL)
 .github/workflows/cron.yml    # GitHub Actionsワークフロー
-site/index.html               # 公開用ページ(Supabaseのarticlesテーブルを直接取得して一覧表示)
+docs/index.html                # 公開用ページ(Supabaseのarticlesテーブルを直接取得して一覧表示)
 ```
