@@ -1,13 +1,13 @@
 # 業界ニュース自動選別・リンク掲載システム
 
-許諾済みメディアのRSSから記事を取得し、Gemini APIで「業界全体のニュース」のみを自動選別した上で、
+許諾済みメディアのRSSから記事を取得し、Groq API(Llama系モデル)で「業界全体のニュース」のみを自動選別した上で、
 Supabaseに保存し、Webサイト(`site/index.html`)がそのデータを直接読み込んで一覧表示する、
 運用コスト0円のシステムです。
 
 ## 全体構成
 
 - **実行**: GitHub Actions(毎日 UTC 23:00 = JST 8:00 起動。実際の投稿間隔は48時間おきになるようスクリプト内で制御)
-- **AI判定**: Google Gemini API(`GEMINI_MODEL`で指定。構造化出力で`is_industry_news`/`reason`を取得)
+- **AI判定**: Groq API(`GROQ_MODEL`で指定。構造化出力で`is_industry_news`/`reason`を取得。Gemini APIは2026年3月の課金体系変更でカード登録なしの無料利用が難しくなったため、カード登録不要の無料枠があるGroqに変更)
 - **永続化**: Supabase
   - `articles`: 業界ニュースと判定された記事(Webサイトが直接読み込む公開テーブル)
   - `judgement_logs`: 全記事の判定ログ(OK/NG問わず。重複判定防止のキーも兼ねる)
@@ -28,9 +28,9 @@ Slackなどの通知は使用していません。実行が失敗した場合は
 3. 「Project Settings」→「API Keys」→「Legacy anon, service_role API keys」から、後述の`SUPABASE_URL`(Project URL)と`SUPABASE_KEY`(service_role key)を控える。
    - 同じ画面の`anon`キーは`site/index.html`内に埋め込み済みです(公開して問題ない設計です。詳しくは後述)。
 
-### 2. Gemini APIキーの取得
+### 2. Groq APIキーの取得
 
-[Google AI Studio](https://aistudio.google.com/apikey)でAPIキーを発行する(無料枠)。Google Cloudプロジェクトの選択が必要な場合、新規作成できなければ既存プロジェクトを選んでも構いません。
+[GroqCloud](https://console.groq.com/keys)でアカウントを作成し(Googleアカウント等でログイン可能)、APIキーを発行する(無料枠。クレジットカード登録不要)。
 
 ### 3. GitHubリポジトリへの登録
 
@@ -38,8 +38,8 @@ Slackなどの通知は使用していません。実行が失敗した場合は
 
 | Secret名 | 内容 |
 | --- | --- |
-| `GEMINI_API_KEY` | Gemini APIキー |
-| `GEMINI_MODEL` | 使用するモデル名(例: `gemini-2.5-flash`) |
+| `GROQ_API_KEY` | Groq APIキー |
+| `GROQ_MODEL` | 使用するモデル名(例: `openai/gpt-oss-120b`。構造化出力(`json_schema`)対応モデルのみ使用可) |
 | `RSS_URL` | 対象メディアのRSSフィードURL |
 | `SUPABASE_URL` | SupabaseプロジェクトURL |
 | `SUPABASE_KEY` | Supabaseのservice_role key |
@@ -67,13 +67,13 @@ GitHubのデフォルト設定では、失敗したワークフロー実行に�
 
 ## モデル廃止・変更時の対応
 
-Gemini 2.5系のモデルは将来的に段階廃止される可能性があります。モデル名はコードに直書きせず`GEMINI_MODEL`環境変数(Secrets)で管理しているため、対応は以下のみです。
+Groqが提供するモデルは将来的に廃止・変更される可能性があります。モデル名はコードに直書きせず`GROQ_MODEL`環境変数(Secrets)で管理しているため、対応は以下のみです。
 
-1. [Gemini APIのモデル一覧](https://ai.google.dev/gemini-api/docs/models)で後継モデル名を確認する。
-2. GitHub Secretsの`GEMINI_MODEL`を新しいモデル名に変更する。
+1. [Groqのモデル一覧](https://console.groq.com/docs/models)で後継モデル名を確認する(構造化出力`json_schema`に対応しているモデルを選ぶこと。対応状況は[Structured Outputsのドキュメント](https://console.groq.com/docs/structured-outputs)を参照)。
+2. GitHub Secretsの`GROQ_MODEL`を新しいモデル名に変更する。
 3. 「Run workflow」で手動実行し、正常に判定されることを確認する。
 
-また、Gemini無料枠のレート制限(RPM/RPD)は変更される可能性があります。1回の実行で大量の新規記事を処理する場合、`main.py`の判定ループはリトライ(指数バックオフ)を行いますが、記事数が非常に多い場合は判定間に`time.sleep`を挟む等の調整を検討してください。
+また、Groq無料枠のレート制限(RPM/RPD/トークン数)は変更される可能性があります。1回の実行で大量の新規記事を処理する場合、`main.py`の判定ループはリトライ(指数バックオフ)を行いますが、記事数が非常に多い場合は判定間に`time.sleep`を挟む等の調整を検討してください。
 
 ## GitHub Actionsの60日非アクティブ問題への注意
 

@@ -4,7 +4,7 @@
   Step 0: 前回実行から指定時間(既定48時間)経っていなければスキップ
   Step 1: RSSから記事取得
   Step 2: 未判定(judgement_logs未登録)の記事のみ抽出
-  Step 3: Geminiで「業界全体ニュース」かどうかを構造化出力で判定し、全件ログ保存
+  Step 3: Groq(Llama系モデル)で「業界全体ニュース」かどうかを構造化出力で判定し、全件ログ保存
   Step 4: OK判定の記事のみ articles テーブルに保存(Webサイトはこのテーブルを直接参照する)
 
 エラー発生時はSlack通知等は行わず、例外を上位に伝播させてスクリプトを異常終了させる。
@@ -13,7 +13,7 @@ GitHub Actions側でジョブが失敗として記録され、リポジトリの
 
 設計メモ:
   - 重複防止は judgement_logs.url を「一度判定した記事」の記録として利用する。
-    NG記事もここに記録されるため、RSSに残り続ける記事を毎回Geminiに
+    NG記事もここに記録されるため、RSSに残り続ける記事を毎回AIに
     再判定させることがない。
   - articles テーブルは重複防止のキーではなく、Webサイトが直接読み込む
     公開データそのもの(OK判定の記事のみ)。RLSで読み取り専用に公開している。
@@ -29,8 +29,7 @@ from typing import Any
 
 import feedparser
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+from groq import Groq
 from pydantic import BaseModel
 from supabase import Client, create_client
 
@@ -49,8 +48,8 @@ class ConfigError(RuntimeError):
 
 class Config:
     def __init__(self) -> None:
-        self.gemini_api_key = self._require("GEMINI_API_KEY")
-        self.gemini_model = self._require("GEMINI_MODEL")
+        self.groq_api_key = self._require("GROQ_API_KEY")
+        self.groq_model = self._require("GROQ_MODEL")
         self.rss_url = self._require("RSS_URL")
         self.supabase_url = self._require("SUPABASE_URL")
         self.supabase_key = self._require("SUPABASE_KEY")
@@ -165,19 +164,34 @@ def save_article(supabase: Client, article: dict[str, Any]) -> None:
     ).execute()
 
 
-def judge_industry_news(client: genai.Client, model: str, article: dict[str, Any]) -> JudgementResult:
+JUDGEMENT_JSON_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "judgement",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "is_industry_news": {"type": "boolean"},
+                "reason": {"type": "string"},
+            },
+            "required": ["is_industry_news", "reason"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+def judge_industry_news(client: Groq, model: str, article: dict[str, Any]) -> JudgementResult:
     prompt = JUDGE_PROMPT_TEMPLATE.format(
         title=article["title"], summary=article.get("summary") or "(概要なし)"
     )
-    response = client.models.generate_content(
+    response = client.chat.completions.create(
         model=model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=JudgementResult,
-        ),
+        messages=[{"role": "user", "content": prompt}],
+        response_format=JUDGEMENT_JSON_SCHEMA,
     )
-    return JudgementResult.model_validate_json(response.text)
+    return JudgementResult.model_validate_json(response.choices[0].message.content)
 
 
 def main() -> None:
@@ -210,12 +224,12 @@ def main() -> None:
         return
 
     # Step 3 & 4: AI判定 -> ログ保存 -> OK記事のみarticlesに保存
-    genai_client = genai.Client(api_key=config.gemini_api_key)
+    groq_client = Groq(api_key=config.groq_api_key)
     saved_count = 0
 
     for article in new_articles:
         try:
-            result = with_retry(judge_industry_news, genai_client, config.gemini_model, article)
+            result = with_retry(judge_industry_news, groq_client, config.groq_model, article)
         except Exception as exc:  # noqa: BLE001
             logger.error("AI判定に失敗したためこの記事は今回スキップします: %s / %s", article["title"], exc)
             continue  # judgement_logsに残らないため次回また判定対象になる
