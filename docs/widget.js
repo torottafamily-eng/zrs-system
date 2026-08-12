@@ -13,7 +13,7 @@
     li.style.cssText = "padding: 0.75rem 0; border-bottom: 1px solid #eee;";
     var a = document.createElement("a");
     a.href = article.url;
-    a.textContent = article.title;
+    a.textContent = "→ " + article.title;
     a.target = "_blank";
     a.rel = "noopener noreferrer";
     a.style.cssText = "color: #222; text-decoration: none;";
