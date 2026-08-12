@@ -13,6 +13,8 @@
   a:hover { text-decoration: underline; }
   .date { color: #888; font-size: 0.85rem; display: block; margin-top: 0.2rem; }
   .empty { color: #888; }
+  .more-btn { display: block; width: 100%; margin-top: 1rem; padding: 0.6rem; background: #f5f5f5; border: 1px solid #ddd; border-radius: 4px; color: #333; font-size: 0.9rem; cursor: pointer; }
+  .more-btn:hover { background: #eee; }
 </style>
 </head>
 <body>
@@ -24,8 +26,24 @@
     // クライアント側のコードに埋め込んで公開する設計で問題ない。
     const SUPABASE_URL = "https://osmvsriosaojgcmgwvhk.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9zbXZzcmlvc2FvamdjbWd3dmhrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU5MDgzNTYsImV4cCI6MjEwMTQ4NDM1Nn0.hQvs3jYdq0YNmwROJM3p5ijmY7jwGBmwcg5jMPVgXv0";
+    const INITIAL_COUNT = 6;
 
     const endpoint = `${SUPABASE_URL}/rest/v1/articles?select=title,url,published_at,created_at&order=created_at.desc`;
+
+    function renderArticle(list, article) {
+      const li = document.createElement("li");
+      const a = document.createElement("a");
+      a.href = article.url;
+      a.textContent = article.title;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      const date = document.createElement("span");
+      date.className = "date";
+      date.textContent = article.published_at || article.created_at || "";
+      li.appendChild(a);
+      li.appendChild(date);
+      list.appendChild(li);
+    }
 
     fetch(endpoint, {
       headers: {
@@ -41,19 +59,19 @@
           list.innerHTML = '<li class="empty">まだ記事がありません。</li>';
           return;
         }
-        for (const article of articles) {
-          const li = document.createElement("li");
-          const a = document.createElement("a");
-          a.href = article.url;
-          a.textContent = article.title;
-          a.target = "_blank";
-          a.rel = "noopener noreferrer";
-          const date = document.createElement("span");
-          date.className = "date";
-          date.textContent = article.published_at || article.created_at || "";
-          li.appendChild(a);
-          li.appendChild(date);
-          list.appendChild(li);
+        articles.slice(0, INITIAL_COUNT).forEach((article) => renderArticle(list, article));
+
+        const rest = articles.slice(INITIAL_COUNT);
+        if (rest.length) {
+          const moreBtn = document.createElement("button");
+          moreBtn.type = "button";
+          moreBtn.className = "more-btn";
+          moreBtn.textContent = `他の記事はこちら(残り${rest.length}件)`;
+          moreBtn.addEventListener("click", () => {
+            rest.forEach((article) => renderArticle(list, article));
+            moreBtn.remove();
+          });
+          list.after(moreBtn);
         }
       })
       .catch(() => {
