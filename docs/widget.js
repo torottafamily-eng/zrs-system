@@ -17,11 +17,7 @@
     a.target = "_blank";
     a.rel = "noopener noreferrer";
     a.style.cssText = "color: #0b5fff; text-decoration: none;";
-    var date = document.createElement("span");
-    date.style.cssText = "color: #888; font-size: 0.85rem; display: block; margin-top: 0.2rem;";
-    date.textContent = article.published_at || article.created_at || "";
     li.appendChild(a);
-    li.appendChild(date);
     list.appendChild(li);
   }
 
