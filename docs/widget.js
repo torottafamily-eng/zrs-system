@@ -16,7 +16,7 @@
     a.textContent = article.title;
     a.target = "_blank";
     a.rel = "noopener noreferrer";
-    a.style.cssText = "color: #0b5fff; text-decoration: none;";
+    a.style.cssText = "color: #222; text-decoration: none;";
     li.appendChild(a);
     list.appendChild(li);
   }
