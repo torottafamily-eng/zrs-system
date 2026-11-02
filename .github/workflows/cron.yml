@@ -8,6 +8,11 @@ on:
     - cron: "0 23 * * *"
   workflow_dispatch: {}
 
+# GitHubは60日間コミットのないリポジトリのスケジュール実行を自動停止するため、
+# Keepaliveステップで最終コミットから45日以上経っていれば空コミットをpushする。
+permissions:
+  contents: write
+
 concurrency:
   group: industry-news-bot
   cancel-in-progress: false
@@ -18,6 +23,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Keepalive (prevent 60-day auto-disable)
+        if: github.event_name == 'schedule'
+        run: |
+          last=$(git log -1 --format=%ct)
+          now=$(date +%s)
+          days=$(( (now - last) / 86400 ))
+          echo "最終コミットから${days}日"
+          if [ "$days" -ge 45 ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "chore: keepalive (prevent scheduled workflow auto-disable)"
+            git push
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
